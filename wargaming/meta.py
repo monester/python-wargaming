@@ -34,7 +34,7 @@ def region_url(region, game):
 class WGAPI(object):
     """Result from WG API request"""
 
-    def __init__(self, url, stop_max_attempt_number=RETRY_COUNT, **kwargs):
+    def __init__(self, url, pagaable=False, stop_max_attempt_number=RETRY_COUNT, **kwargs):
         self.url = url
         for name, value in kwargs.items():
             if isinstance(value, list) or isinstance(value, tuple):
@@ -45,6 +45,11 @@ class WGAPI(object):
         self._data = None
         self.error = None
         self._iter = None
+
+        self.pagaable = pagaable
+        self.per_page = None
+        self.page_no = kwargs.get('page_no', 1)
+
         self.stop_max_attempt_number = stop_max_attempt_number
         self._fetch_data = retry(
             stop_max_attempt_number=stop_max_attempt_number,
@@ -53,6 +58,8 @@ class WGAPI(object):
 
     def _fetch_data(self):
         if not self._data:
+            if self.pagaable:
+                self.params['page_no'] = self.page_no
             self.response = response = requests.get(self.url, params=self.params, headers={
                 'User-Agent': HTTP_USER_AGENT_HEADER,
             }).json()
@@ -61,12 +68,21 @@ class WGAPI(object):
                 self.error = response['error']
                 raise RequestError(**self.error)
 
+            self._meta = response.get('meta', {})
             self._data = response.get('data', response)
+
+            if not self.per_page:
+                self.per_page = len(self.data)
         return self._data
 
     @property
     def data(self):
         return self._fetch_data()
+
+    @property
+    def meta(self):
+        self._fetch_data()
+        return self._meta
 
     @data.setter
     def data(self, value):
@@ -74,13 +90,31 @@ class WGAPI(object):
         self._data = value
 
     def __len__(self):
+        if self.pagaable:
+            return self.meta.get('total', 0)
         return len(self.data)
 
     def __str__(self):
         return str(self.data)
 
     def __iter__(self):
+        if self.pagaable:
+            self._iter = iter(self.data)
+            return self
         return iter(self.data)
+
+    def next(self):
+        try:
+            return next(self._iter)
+        except StopIteration:
+            if 0 < len(self) < self.page_no * self.per_page:
+                raise
+            self.data = None
+            self.page_no += 1
+            if len(self.data) == 0:
+                raise
+            self._iter = iter(self.data)
+            return next(self._iter)
 
     def keys(self):
         return self.data.keys()
@@ -188,7 +222,10 @@ class MetaAPI(type):
                     if params['required'] and field not in kwargs:
                         raise ValidationError('Missing required paramter : {0}'.format(field))
 
-                return WGAPI(self.base_url + url, **kwargs)
+                # if method has page_no and no page_no passed to method
+                pagaable = 'page_no' in fields and 'page_no' not in kwargs
+
+                return WGAPI(self.base_url + url, pagaable=pagaable, **kwargs)
             doc += "\n\nKeyword arguments:\n"
             for value_name, value_desc in fields.items():
                 doc += "%-20s  doc:      %s\n" % (value_name, value_desc['doc'])
