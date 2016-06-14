@@ -23,5 +23,9 @@ class RequestError(APIError):
 
 class ValidationError(APIError):
     """Invalid param value error"""
+    pass
 
+
+class NotImplemented(APIError):
+    """If method isn't implemented"""
     pass

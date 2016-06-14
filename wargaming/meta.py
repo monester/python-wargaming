@@ -91,7 +91,9 @@ class WGAPI(object):
 
     def __len__(self):
         if self.pagaable:
-            return self.meta.get('total', 0)
+            if 'total' in self.meta:
+                return self.meta.get('total', 0)
+            raise NotImplemented("%s doesn't have 'total' in 'meta'" % self.url)
         return len(self.data)
 
     def __str__(self):
