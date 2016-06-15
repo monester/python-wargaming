@@ -33,34 +33,44 @@ def region_url(region, game):
 @six.python_2_unicode_compatible
 class WGAPI(object):
     """Result from WG API request"""
+    _cache = {}
 
-    def __init__(self, url, pagaable=False, stop_max_attempt_number=RETRY_COUNT, **kwargs):
+    def __init__(self, url, pagination=False, range=None,
+                 stop_max_attempt_number=RETRY_COUNT, **kwargs):
+        """WGAPI init
+        :param url: url to resource
+        :param pagination: transparent navigation across multipage responce flag
+        :param range: not impemented
+        """
         self.url = url
         for name, value in kwargs.items():
             if isinstance(value, list) or isinstance(value, tuple):
                 kwargs[name] = ','.join(str(i) for i in value)
             elif isinstance(value, datetime):
                 kwargs[name] = value.isoformat()
-        self.params = kwargs
+        self._params = kwargs
         self._data = None
         self.error = None
         self._iter = None
 
-        self.pagaable = pagaable
-        self.per_page = None
-        self.page_no = kwargs.get('page_no', 1)
+        self._pagination = pagination
+        self._per_page_value = None
+        self._page_no = kwargs.get('page_no', 1)
 
-        self.stop_max_attempt_number = stop_max_attempt_number
+        self._stop_max_attempt_number = stop_max_attempt_number
         self._fetch_data = retry(
             stop_max_attempt_number=stop_max_attempt_number,
             retry_on_exception=lambda ex: isinstance(ex, RequestError)
         )(self._fetch_data)
 
     def _fetch_data(self):
-        if not self._data:
-            if self.pagaable:
-                self.params['page_no'] = self.page_no
-            self.response = response = requests.get(self.url, params=self.params, headers={
+        params = self._params.copy()
+        if self._pagination:
+            params['page_no'] = self._page_no
+        key = six.moves.urllib.parse.urlencode(params)
+
+        if key not in self._cache:
+            response = requests.get(self.url, params=params, headers={
                 'User-Agent': HTTP_USER_AGENT_HEADER,
             }).json()
 
@@ -69,11 +79,20 @@ class WGAPI(object):
                 raise RequestError(**self.error)
 
             self._meta = response.get('meta', {})
-            self._data = response.get('data', response)
+            self._cache[key] = response.get('data', response)
 
-            if not self.per_page:
-                self.per_page = len(self.data)
-        return self._data
+            if not self._per_page_value:
+                self._per_page_value = len(self.data)
+        return self._cache[key]
+
+    @property
+    def _per_page(self):
+        if not self._per_page_value:
+            page_no = self.page_no
+            self.page_no = 1
+            self._fetch_data()
+            self.page_no = page_no
+        return self._per_page_value
 
     @property
     def data(self):
@@ -90,17 +109,17 @@ class WGAPI(object):
         self._data = value
 
     def __len__(self):
-        if self.pagaable:
+        if self._pagination:
             if 'total' in self.meta:
                 return self.meta.get('total', 0)
-            raise NotImplemented("%s doesn't have 'total' in 'meta'" % self.url)
+            raise NotImplementedError("%s doesn't have 'total' in 'meta'" % self.url)
         return len(self.data)
 
     def __str__(self):
         return str(self.data)
 
     def __iter__(self):
-        if self.pagaable:
+        if self._pagination:
             self._iter = iter(self.data)
             return self
         return iter(self.data)
@@ -109,12 +128,16 @@ class WGAPI(object):
         try:
             return next(self._iter)
         except StopIteration:
-            if 0 < len(self) < self.page_no * self.per_page:
-                raise
-            self.data = None
-            self.page_no += 1
+            try:
+                if 0 < len(self) < self._page_no * self._per_page:
+                    raise
+            except NotImplementedError:
+                # method does not support len
+                # we should fetch next page and reraise if len == 0
+                pass
+            self._page_no += 1
             if len(self.data) == 0:
-                raise
+                raise StopIteration
             self._iter = iter(self.data)
             return next(self._iter)
 
@@ -225,9 +248,9 @@ class MetaAPI(type):
                         raise ValidationError('Missing required paramter : {0}'.format(field))
 
                 # if method has page_no and no page_no passed to method
-                pagaable = 'page_no' in fields and 'page_no' not in kwargs
+                pagination = 'page_no' in fields and 'page_no' not in kwargs
 
-                return WGAPI(self.base_url + url, pagaable=pagaable, **kwargs)
+                return WGAPI(self.base_url + url, pagination=pagination, **kwargs)
             doc += "\n\nKeyword arguments:\n"
             for value_name, value_desc in fields.items():
                 doc += "%-20s  doc:      %s\n" % (value_name, value_desc['doc'])
