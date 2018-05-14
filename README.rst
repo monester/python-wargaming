@@ -16,6 +16,31 @@ As simple as usual:
 
     $ pip install wargaming
 
+
+Usage
+-----
+
+.. code:: python
+
+    import wargaming
+    
+    API_KEY = 'demo'
+    
+    wgn = wargaming.WGN(API_KEY, region='ru', language='ru')
+    wot = wargaming.WoT(API_KEY, region='ru', language='ru')
+    serb = wgn.account.list(search='SerB')[0]  # well known person in WG
+    
+    tank_names = {int(k): v for k, v in wot.encyclopedia.tanks(fields=['name_i18n']).items()}
+    
+    print('Tanks statistics:\n%-40s : %s' % ('Tank name', 'Win Rate'))
+    for tank in wot.account.tanks(account_id=serb['account_id'])[str(serb['account_id'])]:
+        name = tank_names.get(tank['tank_id'], {}).get('name_i18n') or 'No such vehicle in encyclopedia'
+        wins = tank['statistics']['wins']
+        battles = tank['statistics']['battles']
+        win_rate = 100.0 * wins / battles
+        print('%-40s : %.2f%% (%s / %s)' % (name, win_rate, wins, battles))
+
+
 Documentation
 -------------
 
